@@ -21,7 +21,8 @@ type Payload struct {
 func Main(Context openruntimes.Context) openruntimes.Response {
 	// 1. Initialize Appwrite Client
 	client := appwrite.NewClient(
-		appwrite.WithEndpoint("https://cloud.appwrite.io/v1"),
+		appwrite.WithEndpoint("https://sgp.cloud.appwrite.io/v1"),
+		// appwrite.WithEndpoint(os.Getenv("APPWRITE_FUNCTION_API_ENDPOINT")),
 		appwrite.WithProject(os.Getenv("APPWRITE_FUNCTION_PROJECT_ID")),
 		appwrite.WithKey(os.Getenv("APPWRITE_API_KEY")), // Needs 'messages.write' scope
 	)
