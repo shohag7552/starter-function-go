@@ -1,43 +1,15 @@
-# ⚡ Go Starter Function
-
-A simple starter function. Edit `src/main.go` to get started and create something awesome! 🚀
+# ⚡ Go Notification Function for food system
 
 ## 🧰 Usage
 
-### GET /ping
-
-- Returns a "Pong" message.
-
-**Response**
-
-Sample `200` Response:
-
-```text
-Pong
-```
-
-### GET, POST, PUT, PATCH, DELETE /
-
-- Returns a "Learn More" JSON response.
-
-**Response**
-
-Sample `200` Response:
-
-```json
-{
-  "motto": "Build like a team of hundreds_",
-  "learn": "https://appwrite.io/docs",
-  "connect": "https://appwrite.io/discord",
-  "getInspired": "https://builtwith.appwrite.io"
-}
-```
+- Manage notification using topic subscription
+- Manage device specific notificaiton
 
 ## ⚙️ Configuration
 
 | Setting           | Value         |
 | ----------------- | ------------- |
-| Runtime           | Go (1.23)     |
+| Runtime           | Go (1.26)     |
 | Entrypoint        | `main.go`     |
 | Permissions       | `any`         |
 | Timeout (Seconds) | 15            |
