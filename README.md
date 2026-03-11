@@ -1,4 +1,4 @@
-# ⚡ Go Notification Function for food system
+# ⚡ Go PayPal Function for food system
 
 ## 🧰 Usage
 
