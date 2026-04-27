@@ -10,12 +10,12 @@ import (
 
 // Define the structure of the data coming from Flutter
 type Payload struct {
-	Type    string `json:"type"`    // "order_update" or "broadcast"
-	UserId  string `json:"userId"`  // Used if type is "order_update"
-	Topic   string `json:"topic"`   // Used if type is "broadcast" (e.g., "all_users")
-	Title   string `json:"title"`
-	Message string `json:"message"`
-	OrderId string `json:"orderId"` // Optional, for order tracking
+	Type       string `json:"type"`   // "order_update" or "broadcast"
+	UserId     string `json:"userId"` // Used if type is "order_update"
+	Topic      string `json:"topic"`  // Used if type is "broadcast" (e.g., "all_users")
+	Title      string `json:"title"`
+	Message    string `json:"message"`
+	OrderId    string `json:"orderId"`    // Optional, for order tracking
 	ProviderId string `json:"providerId"` // Optional, for provider tracking
 }
 
@@ -71,7 +71,7 @@ func Main(Context openruntimes.Context) openruntimes.Response {
 			Context.Error("Broadcast failed: " + err.Error())
 			return Context.Res.Json(map[string]interface{}{"status": "error", "message": err.Error()})
 		}
-		
+
 		Context.Log("✅ Broadcast sent to topic: " + payload.Topic)
 
 	} else {
@@ -89,7 +89,7 @@ func Main(Context openruntimes.Context) openruntimes.Response {
 			Context.Error("Order update failed: " + err.Error())
 			return Context.Res.Json(map[string]interface{}{"status": "error", "message": err.Error()})
 		}
-		
+
 		Context.Log("✅ Order update sent to user: " + payload.UserId)
 	}
 
