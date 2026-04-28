@@ -16,7 +16,6 @@ type Payload struct {
 	Title      string `json:"title"`
 	Message    string `json:"message"`
 	OrderId    string `json:"orderId"`    // Optional, for order tracking
-	ProviderId string `json:"providerId"` // Optional, for provider tracking
 }
 
 func Main(Context openruntimes.Context) openruntimes.Response {
@@ -81,7 +80,6 @@ func Main(Context openruntimes.Context) openruntimes.Response {
 			messaging.WithCreatePushTitle(payload.Title),
 			messaging.WithCreatePushBody(payload.Message),
 			messaging.WithCreatePushUsers([]string{payload.UserId}),
-			messaging.WithCreatePushProviders([]string{payload.ProviderId}),
 			messaging.WithCreatePushData(data),
 		)
 
