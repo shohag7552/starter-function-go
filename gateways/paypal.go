@@ -12,11 +12,14 @@ import (
 
 // HandlePaypal creates a PayPal order and returns the approval URL.
 // Endpoint: POST /paypal/create
-// Env vars: PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_IS_SANDBOX
+// Env vars: PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_IS_SANDBOX,
+//           PAYMENT_SUCCESS_URL, PAYMENT_CANCEL_URL
 func HandlePaypal(ctx openruntimes.Context) openruntimes.Response {
 	clientID := os.Getenv("PAYPAL_CLIENT_ID")
 	clientSecret := os.Getenv("PAYPAL_CLIENT_SECRET")
 	isSandbox := os.Getenv("PAYPAL_IS_SANDBOX")
+	successURL := os.Getenv("PAYMENT_SUCCESS_URL")
+	cancelURL := os.Getenv("PAYMENT_CANCEL_URL")
 
 	if clientID == "" || clientSecret == "" {
 		ctx.Error("❌ PayPal credentials missing")
@@ -74,6 +77,15 @@ func HandlePaypal(ctx openruntimes.Context) openruntimes.Response {
 	// Format amount: convert cents to dollars string (e.g., 1500 -> "15.00")
 	amtStr := fmt.Sprintf("%.2f", float64(p.Amount)/100.0)
 
+	// Build application context with return/cancel URLs for WebView redirect
+	var appCtx *paypal.ApplicationContext
+	if successURL != "" && cancelURL != "" {
+		appCtx = &paypal.ApplicationContext{
+			ReturnURL: successURL,
+			CancelURL: cancelURL,
+		}
+	}
+
 	// Create order
 	order, err := ppClient.CreateOrder(
 		context.Background(),
@@ -89,7 +101,7 @@ func HandlePaypal(ctx openruntimes.Context) openruntimes.Response {
 			},
 		},
 		nil,
-		nil,
+		appCtx,
 	)
 	if err != nil {
 		ctx.Error("❌ PayPal create order failed: " + err.Error())
@@ -112,6 +124,7 @@ func HandlePaypal(ctx openruntimes.Context) openruntimes.Response {
 	return ctx.Res.Json(map[string]interface{}{
 		"success": true, "gateway": "paypal",
 		"data": map[string]interface{}{
+			"paymentURL":    approveURL,
 			"paypalOrderId": order.ID,
 			"approveURL":    approveURL,
 			"status":        order.Status,

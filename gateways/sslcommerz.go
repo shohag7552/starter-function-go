@@ -120,7 +120,10 @@ func HandleSSLCommerz(ctx openruntimes.Context) openruntimes.Response {
 	return ctx.Res.Json(map[string]interface{}{
 		"success": true, "gateway": "sslcommerz",
 		"data": map[string]interface{}{
-			"gatewayPageURL": gwURL, "sessionKey": sessKey, "status": status,
+			"paymentURL":     gwURL,
+			"gatewayPageURL": gwURL,
+			"sessionKey":     sessKey,
+			"status":         status,
 		},
 	})
 }
