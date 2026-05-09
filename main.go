@@ -68,6 +68,36 @@ func Main(Context openruntimes.Context) openruntimes.Response {
 	case strings.HasPrefix(path, "/paypal"):
 		return gateways.HandlePaypal(Context)
 
+	// ─── Debug: Check which env vars are loaded (remove in production!) ───
+	case strings.HasPrefix(path, "/debug"):
+		envCheck := func(key string) string {
+			val := os.Getenv(key)
+			if val == "" {
+				return "❌ NOT SET"
+			}
+			// Mask the value for security — just show first 4 chars
+			if len(val) > 4 {
+				return "✅ SET (" + val[:4] + "...)"
+			}
+			return "✅ SET"
+		}
+		return Context.Res.Json(map[string]interface{}{
+			"message": "Environment variable status",
+			"vars": map[string]string{
+				"STRIPE_SECRET_KEY":        envCheck("STRIPE_SECRET_KEY"),
+				"SSLCOMMERZ_STORE_ID":      envCheck("SSLCOMMERZ_STORE_ID"),
+				"SSLCOMMERZ_STORE_PASSWORD": envCheck("SSLCOMMERZ_STORE_PASSWORD"),
+				"SSLCOMMERZ_IS_SANDBOX":    envCheck("SSLCOMMERZ_IS_SANDBOX"),
+				"PAYMENT_SUCCESS_URL":      envCheck("PAYMENT_SUCCESS_URL"),
+				"PAYMENT_FAIL_URL":         envCheck("PAYMENT_FAIL_URL"),
+				"PAYMENT_CANCEL_URL":       envCheck("PAYMENT_CANCEL_URL"),
+				"BKASH_APP_KEY":            envCheck("BKASH_APP_KEY"),
+				"RAZORPAY_KEY_ID":          envCheck("RAZORPAY_KEY_ID"),
+				"PAYPAL_CLIENT_ID":         envCheck("PAYPAL_CLIENT_ID"),
+				"API_SECRET":               envCheck("API_SECRET"),
+			},
+		})
+
 	default:
 		return Context.Res.Json(map[string]interface{}{
 			"success": false,
