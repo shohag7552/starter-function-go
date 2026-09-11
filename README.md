@@ -1,123 +1,86 @@
-# ⚡ Multi-Gateway Payment Function (Go)
+# Stripe Payment Function (Go)
 
-Appwrite Cloud Function that supports **5 payment gateways** in a single deployment:
+An Appwrite Cloud Function that handles Stripe payments for a client app.
 
-| Gateway | Endpoint | What it returns |
-|---------|----------|-----------------|
-| **Stripe** | `POST /stripe/create` | `clientSecret` for Stripe SDK |
-| **SSLCommerz** | `POST /sslcommerz/create` | `gatewayPageURL` for redirect |
-| **bKash** | `POST /bkash/create` | `bkashURL` for redirect |
-| **bKash** | `POST /bkash/execute` | Transaction result |
-| **Razorpay** | `POST /razorpay/create` | `orderId` + `keyId` for Razorpay SDK |
-| **PayPal** | `POST /paypal/create` | `approveURL` for redirect |
+It uses **Stripe Checkout (hosted)**: the customer enters their card on
+`checkout.stripe.com`, so no card data ever touches this function or your app.
 
-## ⚙️ Configuration
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| POST | `/stripe/create` | `x-api-secret` | Open a Checkout Session, returns the hosted payment URL |
+| POST | `/stripe/verify` | `x-api-secret` | Ask Stripe whether a session was actually paid |
+| POST | `/stripe/webhook` | Stripe signature | Receive Stripe's event notifications |
+| POST | `/debug` | `x-api-secret` | Configuration report (off unless enabled) |
 
-| Setting           | Value         |
-| ----------------- | ------------- |
-| Runtime           | Go (1.22+)    |
-| Entrypoint        | `main.go`     |
-| Permissions       | `any`         |
-| Timeout (Seconds) | 15            |
+> **The one rule:** creating a session is not a payment, and landing on your
+> success URL is not a payment. Only mark an order paid after `/stripe/verify`
+> or the webhook confirms Stripe actually charged the card.
 
-## 🔒 Environment Variables
+Full reference — every environment variable, the webhook setup, the Flutter
+flow, error codes and the go-live checklist — is in **[docs/STRIPE.md](docs/STRIPE.md)**.
 
-### Stripe
-| Variable | Description |
-|----------|-------------|
-| `STRIPE_SECRET_KEY` | Stripe secret API key |
+## Appwrite settings
 
-### SSLCommerz
-| Variable | Description |
-|----------|-------------|
-| `SSLCOMMERZ_STORE_ID` | SSLCommerz store ID |
-| `SSLCOMMERZ_STORE_PASSWORD` | SSLCommerz store password |
-| `SSLCOMMERZ_IS_SANDBOX` | `true` for sandbox (default) |
+| Setting | Value |
+|---|---|
+| Runtime | Go 1.23+ |
+| Entrypoint | `main.go` |
+| Permissions | `any` — Stripe's servers must reach the webhook route |
+| Timeout (seconds) | 15 |
 
-### bKash
-| Variable | Description |
-|----------|-------------|
-| `BKASH_APP_KEY` | bKash app key |
-| `BKASH_APP_SECRET` | bKash app secret |
-| `BKASH_USERNAME` | bKash merchant username |
-| `BKASH_PASSWORD` | bKash merchant password |
-| `BKASH_IS_SANDBOX` | `true` for sandbox (default) |
+## Minimum environment variables
 
-### Razorpay
-| Variable | Description |
-|----------|-------------|
-| `RAZORPAY_KEY_ID` | Razorpay key ID |
-| `RAZORPAY_KEY_SECRET` | Razorpay key secret |
+Enough to take a test payment:
 
-### PayPal
-| Variable | Description |
-|----------|-------------|
-| `PAYPAL_CLIENT_ID` | PayPal client ID |
-| `PAYPAL_CLIENT_SECRET` | PayPal client secret |
-| `PAYPAL_IS_SANDBOX` | `true` for sandbox (default) |
+| Variable | Value |
+|---|---|
+| `API_SECRET` | A long random string. **Required** — the function refuses every request without it. |
+| `STRIPE_SECRET_KEY` | Your `sk_test_…` key |
+| `STRIPE_WEBHOOK_SECRET` | The `whsec_…` signing secret from the Stripe dashboard |
+| `PAYMENT_SUCCESS_URL` | Where the customer lands after paying |
+| `PAYMENT_CANCEL_URL` | Where the customer lands if they back out |
 
-### Shared
-| Variable | Description |
-|----------|-------------|
-| `PAYMENT_SUCCESS_URL` | Redirect URL on success (SSLCommerz/bKash) |
-| `PAYMENT_FAIL_URL` | Redirect URL on failure (SSLCommerz/bKash) |
-| `PAYMENT_CANCEL_URL` | Redirect URL on cancel (SSLCommerz/bKash) |
+`PAYMENT_MODE` defaults to `test`, and a `sk_live_` key in test mode is refused —
+a missing or misspelled variable can never silently start charging real cards.
+Set `PAYMENT_MODE=live` and `STRIPE_LIVE_SECRET_KEY` when you go live.
 
-## 📂 Project Structure
+## Example
+
+```bash
+# 1. Create the session
+curl -X POST <FUNCTION_URL>/stripe/create \
+  -H "Content-Type: application/json" \
+  -H "x-api-secret: $API_SECRET" \
+  -d '{"amount": 1500, "currency": "USD", "orderId": "order_001", "productName": "Chicken Biryani x2"}'
+# → { "data": { "paymentURL": "https://checkout.stripe.com/…", "sessionId": "cs_test_…" } }
+
+# 2. Open paymentURL, let the customer pay, then verify before releasing the order
+curl -X POST <FUNCTION_URL>/stripe/verify \
+  -H "Content-Type: application/json" \
+  -H "x-api-secret: $API_SECRET" \
+  -d '{"sessionId": "cs_test_…", "orderId": "order_001"}'
+# → { "data": { "paid": true, "status": "paid", … } }
+```
+
+`amount` is in **minor units** (1500 = $15.00) and `currency` is required — it
+is never defaulted, so a client that omits it gets a `400` rather than a charge
+in the wrong currency.
+
+## Project structure
 
 ```
-├── main.go              # Router — dispatches to gateway handlers
+├── main.go              # Router — auth, method and route matching
+├── main_test.go
 ├── gateways/
-│   ├── stripe.go        # Stripe PaymentIntent
-│   ├── sslcommerz.go    # SSLCommerz session
-│   ├── bkash.go         # bKash tokenized checkout
-│   ├── razorpay.go      # Razorpay order
-│   └── paypal.go        # PayPal order
-├── models/
-│   └── payload.go       # Shared types
+│   ├── stripe.go        # create / verify / webhook
+│   └── stripe_test.go
+├── docs/STRIPE.md       # Full integration guide
 ├── go.mod
 └── go.sum
 ```
 
-## 🧪 Example Requests
+## Tests
 
-### Stripe
 ```bash
-curl -X POST <FUNCTION_URL>/stripe/create \
-  -H "Content-Type: application/json" \
-  -d '{"amount": 1500, "currency": "usd", "orderId": "order_001"}'
-```
-
-### SSLCommerz
-```bash
-curl -X POST <FUNCTION_URL>/sslcommerz/create \
-  -H "Content-Type: application/json" \
-  -d '{"amount": 150000, "currency": "BDT", "orderId": "txn_001", "customerName": "John", "customerEmail": "john@mail.com", "customerPhone": "01700000000"}'
-```
-
-### bKash
-```bash
-# Step 1: Create payment
-curl -X POST <FUNCTION_URL>/bkash/create \
-  -H "Content-Type: application/json" \
-  -d '{"amount": 50000, "orderId": "order_002", "callbackURL": "https://your-app.com/bkash/callback"}'
-
-# Step 2: Execute payment (after user completes auth)
-curl -X POST <FUNCTION_URL>/bkash/execute \
-  -H "Content-Type: application/json" \
-  -d '{"paymentID": "TR001234"}'
-```
-
-### Razorpay
-```bash
-curl -X POST <FUNCTION_URL>/razorpay/create \
-  -H "Content-Type: application/json" \
-  -d '{"amount": 50000, "currency": "INR", "orderId": "order_003"}'
-```
-
-### PayPal
-```bash
-curl -X POST <FUNCTION_URL>/paypal/create \
-  -H "Content-Type: application/json" \
-  -d '{"amount": 2500, "currency": "USD", "orderId": "order_004"}'
+go test ./...
 ```

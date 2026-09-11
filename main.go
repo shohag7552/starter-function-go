@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"crypto/subtle"
+	"net/http"
 	"os"
 	"strings"
 
@@ -9,106 +11,155 @@ import (
 )
 
 // Main is the entry point for the Appwrite Cloud Function.
-// It routes requests to the appropriate payment gateway handler based on the URL path.
 //
-// Supported routes:
-//   POST /stripe/create      → Stripe Checkout Session
-//   POST /sslcommerz/create  → SSLCommerz session
-//   POST /bkash/create       → bKash create payment
-//   POST /bkash/execute      → bKash execute payment
-//   POST /razorpay/create    → Razorpay Payment Link
-//   POST /paypal/create      → PayPal order
+// Routes:
 //
-// Security:
-//   - Requires API_SECRET header to match the API_SECRET environment variable
-//   - Only POST method is allowed
+//	POST /stripe/create   → open a Stripe Checkout Session, returns the hosted page URL
+//	POST /stripe/verify   → ask Stripe whether a session was actually paid
+//	POST /stripe/webhook  → receive Stripe's event notifications
+//	POST /debug           → configuration report (only when ENABLE_DEBUG_ENDPOINT=true)
+//
+// Every route except the webhook requires the x-api-secret header to match the
+// API_SECRET environment variable. The webhook cannot carry a custom header, so
+// it authenticates with Stripe's HMAC signature inside the handler instead.
 func Main(Context openruntimes.Context) openruntimes.Response {
-	path := Context.Req.Path
-	method := Context.Req.Method
+	path := normalizePath(Context.Req.Path)
+	method := strings.ToUpper(strings.TrimSpace(Context.Req.Method))
 
-	Context.Log("📍 Request received: " + method + " " + path)
+	Context.Log("Request received: " + method + " " + path)
 
-	// ─── Security: Verify API Secret ───
-	// Prevents unauthorized access. Set API_SECRET env var and send it
-	// as "x-api-secret" header from your Flutter app.
-	apiSecret := os.Getenv("API_SECRET")
-	if apiSecret != "" {
-		requestSecret := Context.Req.Headers["x-api-secret"]
-		if requestSecret != apiSecret {
-			Context.Error("❌ Unauthorized request — invalid or missing API secret")
-			return Context.Res.Json(map[string]interface{}{
-				"success": false,
-				"error":   "Unauthorized",
-			}, Context.Res.WithStatusCode(401))
+	// ─── Method check ───
+	// Runs before authentication so a wrong method gets a clear 405 rather
+	// than a misleading 401.
+	if method != "" && method != http.MethodPost {
+		return fail(Context, http.StatusMethodNotAllowed, "method_not_allowed",
+			"Method not allowed. Use POST.")
+	}
+
+	// ─── Authentication ───
+	if !isWebhookRoute(path) {
+		// Fails closed. The previous version skipped this check entirely when
+		// API_SECRET was empty, so a deployment that lost its environment
+		// variables silently became a publicly writable payment API.
+		apiSecret := os.Getenv("API_SECRET")
+		if apiSecret == "" {
+			Context.Error("API_SECRET is not set — refusing every request")
+			return fail(Context, http.StatusInternalServerError, "config_error",
+				"Server configuration error: API_SECRET is not set.")
+		}
+
+		given := Context.Req.Headers["x-api-secret"]
+		if subtle.ConstantTimeCompare([]byte(given), []byte(apiSecret)) != 1 {
+			Context.Error("Unauthorized request: invalid or missing API secret")
+			return fail(Context, http.StatusUnauthorized, "unauthorized",
+				"Invalid or missing x-api-secret header.")
 		}
 	}
 
-	// ─── Only allow POST requests ───
-	if method != "" && strings.ToUpper(method) != "POST" {
-		return Context.Res.Json(map[string]interface{}{
-			"success": false,
-			"error":   "Method not allowed. Use POST.",
-		}, Context.Res.WithStatusCode(405))
-	}
-
-	// ─── Route to the correct gateway handler ───
-	switch {
-	case strings.HasPrefix(path, "/stripe"):
+	// ─── Routing ───
+	// Matches on the whole first segment. Prefix matching used to send
+	// "/stripe-anything-at-all" to the Stripe handler.
+	switch firstSegment(path) {
+	case "stripe":
 		return gateways.HandleStripe(Context)
 
-	case strings.HasPrefix(path, "/sslcommerz"):
-		return gateways.HandleSSLCommerz(Context)
-
-	case strings.HasPrefix(path, "/bkash"):
-		return gateways.HandleBkash(Context)
-
-	case strings.HasPrefix(path, "/razorpay"):
-		return gateways.HandleRazorpay(Context)
-
-	case strings.HasPrefix(path, "/paypal"):
-		return gateways.HandlePaypal(Context)
-
-	// ─── Debug: Check which env vars are loaded (remove in production!) ───
-	case strings.HasPrefix(path, "/debug"):
-		envCheck := func(key string) string {
-			val := os.Getenv(key)
-			if val == "" {
-				return "❌ NOT SET"
-			}
-			// Mask the value for security — just show first 4 chars
-			if len(val) > 4 {
-				return "✅ SET (" + val[:4] + "...)"
-			}
-			return "✅ SET"
+	case "debug":
+		// Off unless explicitly enabled: it reports configuration state.
+		if !strings.EqualFold(strings.TrimSpace(os.Getenv("ENABLE_DEBUG_ENDPOINT")), "true") {
+			return notFound(Context)
 		}
-		return Context.Res.Json(map[string]interface{}{
-			"message": "Environment variable status",
-			"vars": map[string]string{
-				"STRIPE_SECRET_KEY":        envCheck("STRIPE_SECRET_KEY"),
-				"SSLCOMMERZ_STORE_ID":      envCheck("SSLCOMMERZ_STORE_ID"),
-				"SSLCOMMERZ_STORE_PASSWORD": envCheck("SSLCOMMERZ_STORE_PASSWORD"),
-				"SSLCOMMERZ_IS_SANDBOX":    envCheck("SSLCOMMERZ_IS_SANDBOX"),
-				"PAYMENT_SUCCESS_URL":      envCheck("PAYMENT_SUCCESS_URL"),
-				"PAYMENT_FAIL_URL":         envCheck("PAYMENT_FAIL_URL"),
-				"PAYMENT_CANCEL_URL":       envCheck("PAYMENT_CANCEL_URL"),
-				"BKASH_APP_KEY":            envCheck("BKASH_APP_KEY"),
-				"RAZORPAY_KEY_ID":          envCheck("RAZORPAY_KEY_ID"),
-				"PAYPAL_CLIENT_ID":         envCheck("PAYPAL_CLIENT_ID"),
-				"API_SECRET":               envCheck("API_SECRET"),
-			},
-		})
+		return debugReport(Context)
 
 	default:
-		return Context.Res.Json(map[string]interface{}{
-			"success": false,
-			"error":   "Unknown gateway. Use one of the supported endpoints.",
-			"endpoints": map[string]string{
-				"stripe":     "POST /stripe/create",
-				"sslcommerz": "POST /sslcommerz/create",
-				"bkash":      "POST /bkash/create or /bkash/execute",
-				"razorpay":   "POST /razorpay/create",
-				"paypal":     "POST /paypal/create",
-			},
-		})
+		return notFound(Context)
 	}
+}
+
+// normalizePath trims whitespace and a trailing slash so "/stripe/create/" and
+// "/stripe/create" route identically.
+func normalizePath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return "/"
+	}
+	if len(trimmed) > 1 {
+		trimmed = strings.TrimSuffix(trimmed, "/")
+	}
+	return trimmed
+}
+
+// firstSegment returns the first path segment, lower-cased. "/stripe/create"
+// gives "stripe".
+func firstSegment(path string) string {
+	parts := strings.SplitN(strings.TrimPrefix(path, "/"), "/", 2)
+	return strings.ToLower(parts[0])
+}
+
+func isWebhookRoute(path string) bool {
+	return strings.EqualFold(path, "/stripe/webhook")
+}
+
+func fail(ctx openruntimes.Context, status int, code, message string) openruntimes.Response {
+	return ctx.Res.Json(map[string]interface{}{
+		"success": false,
+		"error": map[string]interface{}{
+			"code":    code,
+			"message": message,
+		},
+	}, ctx.Res.WithStatusCode(status))
+}
+
+func notFound(ctx openruntimes.Context) openruntimes.Response {
+	return ctx.Res.Json(map[string]interface{}{
+		"success": false,
+		"error": map[string]interface{}{
+			"code":    "unknown_route",
+			"message": "Unknown route.",
+		},
+		"endpoints": map[string]string{
+			"create":  "POST /stripe/create",
+			"verify":  "POST /stripe/verify",
+			"webhook": "POST /stripe/webhook",
+		},
+	}, ctx.Res.WithStatusCode(http.StatusNotFound))
+}
+
+// debugReport says only whether each variable is set. The previous version
+// returned the first four characters of every secret, which was enough to tell
+// an sk_live key from an sk_test one.
+func debugReport(ctx openruntimes.Context) openruntimes.Response {
+	isSet := func(key string) string {
+		if strings.TrimSpace(os.Getenv(key)) == "" {
+			return "NOT SET"
+		}
+		return "SET"
+	}
+
+	vars := map[string]string{}
+	for _, key := range []string{
+		"API_SECRET",
+		"PAYMENT_MODE",
+		"STRIPE_MODE",
+		"STRIPE_SECRET_KEY",
+		"STRIPE_TEST_SECRET_KEY",
+		"STRIPE_LIVE_SECRET_KEY",
+		"STRIPE_WEBHOOK_SECRET",
+		"STRIPE_TEST_WEBHOOK_SECRET",
+		"STRIPE_LIVE_WEBHOOK_SECRET",
+		"PAYMENT_SUCCESS_URL",
+		"PAYMENT_CANCEL_URL",
+		"PAYMENT_TEST_SUCCESS_URL",
+		"PAYMENT_TEST_CANCEL_URL",
+		"STRIPE_MIN_AMOUNT",
+		"PAYMENT_MAX_AMOUNT",
+		"PAYMENT_ALLOW_KEY_MISMATCH",
+	} {
+		vars[key] = isSet(key)
+	}
+
+	return ctx.Res.Json(map[string]interface{}{
+		"success": true,
+		"message": "Environment variable status",
+		"vars":    vars,
+	})
 }
