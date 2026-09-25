@@ -37,7 +37,19 @@ func Main(Context openruntimes.Context) openruntimes.Response {
 	}
 
 	// ─── Authentication ───
-	if !isWebhookRoute(path) {
+	//
+	// Two kinds of caller, two kinds of proof.
+	//
+	// The customer app reaches this function through the Appwrite SDK while
+	// signed in, and Appwrite stamps that execution with x-appwrite-user-id.
+	// Appwrite has already authenticated the account by then, so re-proving it
+	// with a shared secret would only mean compiling that secret into a mobile
+	// app — where anyone who unzips the bundle can read it, and rotating it
+	// means shipping a new release.
+	//
+	// The public function domain gets no such header, and neither do API-key
+	// calls, so those still have to present x-api-secret.
+	if !isWebhookRoute(path) && !isInvokedByUser(Context) {
 		// Fails closed. The previous version skipped this check entirely when
 		// API_SECRET was empty, so a deployment that lost its environment
 		// variables silently became a publicly writable payment API.
@@ -99,6 +111,17 @@ func isWebhookRoute(path string) bool {
 	return strings.EqualFold(path, "/stripe/webhook")
 }
 
+// isInvokedByUser reports whether Appwrite ran this execution on behalf of a
+// signed-in account.
+//
+// Appwrite sets this header itself and a caller cannot forge it: requests
+// arriving at the function's public domain never carry it, and neither do
+// executions created with an API key. Restrict the function's execute
+// permission to "users" to decide who this admits.
+func isInvokedByUser(ctx openruntimes.Context) bool {
+	return strings.TrimSpace(ctx.Req.Headers["x-appwrite-user-id"]) != ""
+}
+
 func fail(ctx openruntimes.Context, status int, code, message string) openruntimes.Response {
 	return ctx.Res.Json(map[string]interface{}{
 		"success": false,
@@ -153,6 +176,7 @@ func debugReport(ctx openruntimes.Context) openruntimes.Response {
 		"STRIPE_MIN_AMOUNT",
 		"PAYMENT_MAX_AMOUNT",
 		"PAYMENT_ALLOW_KEY_MISMATCH",
+		"STRIPE_MANAGED_PAYMENTS",
 	} {
 		vars[key] = isSet(key)
 	}

@@ -288,6 +288,45 @@ func TestStripeCreateRequiresRedirectURLs(t *testing.T) {
 // Create — happy path and request shape
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Stripe enables Managed Payments by default, which rejects line items with no
+// tax_code. The client already sends one line item whose amount includes the
+// tax it calculated, so the session must opt out rather than let Stripe
+// calculate tax a second time.
+func TestStripeCreateOptsOutOfManagedPayments(t *testing.T) {
+	setStripeEnv(t, nil)
+	stub := newStubStripe(t, sessionCreatedJSON)
+
+	body := `{"amount": 1500, "currency": "usd", "orderId": "order_123"}`
+	ctx := newTestContext(t, "/stripe/create", body, nil)
+	status, resp := decodeResponse(t, HandleStripe(ctx))
+
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body=%v)", status, resp)
+	}
+	if got := stub.lastForm.Get("managed_payments[enabled]"); got != "false" {
+		t.Errorf("managed_payments[enabled] = %q, want %q", got, "false")
+	}
+}
+
+// An account that genuinely wants Stripe managing tax opts back in, and must
+// then supply its own tax codes. The parameter must be absent entirely, not
+// sent as "true", so Stripe falls back to the account default.
+func TestStripeCreateHonoursManagedPaymentsOptIn(t *testing.T) {
+	setStripeEnv(t, map[string]string{"STRIPE_MANAGED_PAYMENTS": "true"})
+	stub := newStubStripe(t, sessionCreatedJSON)
+
+	body := `{"amount": 1500, "currency": "usd", "orderId": "order_123"}`
+	ctx := newTestContext(t, "/stripe/create", body, nil)
+	status, resp := decodeResponse(t, HandleStripe(ctx))
+
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body=%v)", status, resp)
+	}
+	if _, present := stub.lastForm["managed_payments[enabled]"]; present {
+		t.Errorf("managed_payments[enabled] was sent despite STRIPE_MANAGED_PAYMENTS=true")
+	}
+}
+
 func TestStripeCreateSendsCorrectParams(t *testing.T) {
 	setStripeEnv(t, nil)
 	stub := newStubStripe(t, sessionCreatedJSON)

@@ -1,2 +1,15 @@
 # Directory used by Appwrite CLI for local development
 .appwrite
+
+# Secrets — Stripe keys and the shared API secret. Never commit these.
+.env
+.env.*
+!.env.example
+
+# Deployment archives built for manual upload
+*.tar.gz
+
+# macOS / IDE
+.DS_Store
+.idea/
+code.tar.gz

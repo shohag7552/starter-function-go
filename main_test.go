@@ -130,6 +130,61 @@ func TestAuthAcceptsCorrectSecret(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Appwrite-authenticated executions
+// ─────────────────────────────────────────────────────────────────────────────
+
+// The customer app calls through the Appwrite SDK and never sends the shared
+// secret. Appwrite stamps the execution with the invoking account, and that
+// stands in for the header — reaching the Stripe handler's own validation
+// proves the request got past the gate.
+func TestAppwriteUserExecutionSkipsAPISecret(t *testing.T) {
+	withSecret(t, "supersecret")
+	t.Setenv("STRIPE_SECRET_KEY", "sk_test_dummy")
+	t.Setenv("PAYMENT_SUCCESS_URL", "https://app.example.com/success")
+	t.Setenv("PAYMENT_CANCEL_URL", "https://app.example.com/cancel")
+
+	status, body := call(t, http.MethodPost, "/stripe/create", `{}`,
+		map[string]string{"x-appwrite-user-id": "user_123"})
+
+	if status == http.StatusUnauthorized {
+		t.Fatalf("SDK execution by a signed-in user was rejected: %v", body)
+	}
+	if status != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 from request validation (body=%v)", status, body)
+	}
+}
+
+// An empty header is what an anonymous request to the public function domain
+// carries. It must not be mistaken for a signed-in caller.
+func TestBlankAppwriteUserHeaderStillRequiresSecret(t *testing.T) {
+	withSecret(t, "supersecret")
+
+	for _, value := range []string{"", "   "} {
+		status, _ := call(t, http.MethodPost, "/stripe/create", `{}`,
+			map[string]string{"x-appwrite-user-id": value})
+
+		if status != http.StatusUnauthorized {
+			t.Errorf("x-appwrite-user-id=%q: status = %d, want 401", value, status)
+		}
+	}
+}
+
+// The public domain has no Appwrite account behind it, so the shared secret
+// remains the only way in — that is the surface it exists to protect.
+func TestPublicDomainRequestStillRequiresSecret(t *testing.T) {
+	withSecret(t, "supersecret")
+
+	status, body := call(t, http.MethodPost, "/stripe/create", `{}`, nil)
+
+	if status != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", status)
+	}
+	if got := codeOf(body); got != "unauthorized" {
+		t.Errorf("error code = %q, want unauthorized", got)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Webhook exemption
 // ─────────────────────────────────────────────────────────────────────────────
 

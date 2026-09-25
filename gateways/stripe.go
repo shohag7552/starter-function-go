@@ -284,6 +284,14 @@ func stripeFormatAmount(minor int64, currency string) string {
 	return fmt.Sprintf("%s%d.%02d", sign, minor/100, minor%100)
 }
 
+// envTrue reports whether an environment variable is set to "true", ignoring
+// case and surrounding whitespace. Anything else — unset, empty, "1", "yes" —
+// is false, so a typo fails towards the documented default rather than
+// silently flipping behaviour.
+func envTrue(name string) bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv(name)), "true")
+}
+
 // envAmount reads an amount limit from the environment, falling back to def.
 func envAmount(name string, def int64) int64 {
 	raw := strings.TrimSpace(os.Getenv(name))
@@ -511,6 +519,27 @@ func stripeCreate(ctx openruntimes.Context) openruntimes.Response {
 		},
 	}
 	params.Metadata = metadata
+
+	// Stripe turns Managed Payments on by default for new accounts. Under it
+	// Stripe becomes merchant of record and calculates tax itself, and it
+	// rejects any line item that carries no tax_code — which is the 400 this
+	// function returned before.
+	//
+	// Opting out is the correct answer here rather than adding a tax code: the
+	// client sends a single line item for the whole order whose amount already
+	// includes the tax it calculated, so a second calculation by Stripe would
+	// charge the customer tax twice. Declaring it per session also means the
+	// behaviour does not depend on a dashboard toggle whose default Stripe
+	// controls, or on remembering to set that toggle again in live mode.
+	//
+	// STRIPE_MANAGED_PAYMENTS=true leaves the account default untouched, for a
+	// deployment that does want Stripe managing tax — that one must also put a
+	// tax_code on every line item, or Stripe will reject the session.
+	//
+	// Sent through AddExtra because stripe-go v76 predates the field.
+	if !envTrue("STRIPE_MANAGED_PAYMENTS") {
+		params.AddExtra("managed_payments[enabled]", "false")
+	}
 
 	if email := strings.TrimSpace(p.CustomerEmail); email != "" {
 		params.CustomerEmail = stripe.String(email)
